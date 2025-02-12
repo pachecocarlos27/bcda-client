@@ -16,7 +16,7 @@ setup(
     description="A Python client for the BCDA (Beneficiary Claims Data API)",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/bcda-client",
+    url="https://github.com/pachecocarlos27/bcda-client",
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Healthcare Industry",
