@@ -8,8 +8,8 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 
 setup(
     name="bcda-client",
-    version="1.0.0",
-    packages=find_packages(),
+    version="0.1.0",
+    packages=find_packages(exclude=["tests*"]),
     install_requires=requirements,
     author="Carlos Pacheco",
     author_email="admin@data-nt.com",
@@ -17,8 +17,12 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/pachecocarlos27/bcda-client",
+    project_urls={
+        "Bug Tracker": "https://github.com/pachecocarlos27/bcda-client/issues",
+        "Documentation": "https://github.com/pachecocarlos27/bcda-client#readme",
+    },
     classifiers=[
-        "Development Status :: 4 - Beta",
+        "Development Status :: 3 - Alpha",
         "Intended Audience :: Healthcare Industry",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.6",
@@ -27,6 +31,9 @@ setup(
         "Programming Language :: Python :: 3.9",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
+        "Topic :: Software Development :: Libraries :: Python Modules",
+        "Topic :: Healthcare Industry",
     ],
     python_requires=">=3.6",
+    keywords="healthcare, bcda, cms, medicare, api-client",
 ) 

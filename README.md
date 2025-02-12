@@ -87,7 +87,24 @@ my_data/
 ├── Coverage_20240211_134435.csv
 └── ExplanationOfBenefit_20240211_134435.csv
 
+
+## Features
+
+- Easy authentication with the BCDA API
+- Simple methods to retrieve beneficiary data
+- Automatic handling of pagination
+- Error handling and retry mechanisms
+
+## Requirements
+
+- Python 3.6+
+- See requirements.txt for package dependencies
+
 ## License
 
-MIT License
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
 
