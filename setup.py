@@ -3,8 +3,13 @@ from setuptools import setup, find_packages
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
-with open("requirements.txt", "r", encoding="utf-8") as fh:
-    requirements = [line.strip() for line in fh if line.strip() and not line.startswith("#")]
+# Define requirements directly in setup.py
+requirements = [
+    "requests>=2.25.0",
+    "pandas>=1.0.0",
+    "pyarrow>=3.0.0",
+    "tqdm>=4.50.0"
+]
 
 setup(
     name="bcda-client",
