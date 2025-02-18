@@ -8,12 +8,17 @@ requirements = [
     "requests>=2.25.0",
     "pandas>=1.0.0",
     "pyarrow>=3.0.0",
-    "tqdm>=4.50.0"
+    "tqdm",
+    "pytest>=6.0.0",
+    "pytest-benchmark>=3.4.1",  # For performance testing
+    "psutil>=5.8.0",  # For memory monitoring
+    "pyarrow>=3.0.0",  # For Parquet support
+    "pandas>=1.0.0"    # For data processing
 ]
 
 setup(
-    name="bcda-client",
-    version="0.1.0",
+    name="bcda-client-datant",
+    version="0.1.2",
     packages=find_packages(exclude=["tests*"]),
     install_requires=requirements,
     author="Carlos Pacheco",
@@ -28,7 +33,8 @@ setup(
     },
     classifiers=[
         "Development Status :: 3 - Alpha",
-        "Intended Audience :: Healthcare Industry",
+        "Intended Audience :: Science/Research",
+        "Intended Audience :: Developers",
         "Programming Language :: Python :: 3",
         "Programming Language :: Python :: 3.6",
         "Programming Language :: Python :: 3.7",
@@ -37,8 +43,10 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
         "Topic :: Software Development :: Libraries :: Python Modules",
-        "Topic :: Healthcare Industry",
+        "Topic :: Scientific/Engineering :: Medical Science Apps.",
     ],
     python_requires=">=3.6",
     keywords="healthcare, bcda, cms, medicare, api-client",
+    include_package_data=True,
+    zip_safe=False,
 ) 

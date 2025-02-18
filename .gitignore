@@ -38,5 +38,9 @@ build/
 
 # Testing
 .coverage
+test.py
 htmlcov/
 .pytest_cache/ 
+
+# PyPI
+.pypirc
