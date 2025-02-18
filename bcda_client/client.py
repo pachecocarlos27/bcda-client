@@ -6,14 +6,13 @@ import base64
 import pandas as pd
 from .config import BCDAConfig
 from .utils import get_default_since_date, flatten_dict, print_data_summary
-from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import multiprocessing
+from datetime import datetime, timedelta, timezone
 import pyarrow as pa
 import pyarrow.parquet as pq
 from typing import List, Dict, Optional
 import logging
 from urllib.parse import urljoin
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class BCDAClient:
     def __init__(self, client_id, client_secret, base_url=None, is_sandbox=True, debug=False):
@@ -21,7 +20,6 @@ class BCDAClient:
         self.access_token = None
         self.token_expiry = None
         self.debug = debug
-        self.max_workers = min(32, multiprocessing.cpu_count() * 4)
         self.environment = "sandbox" if is_sandbox else "production"
         
         # Add logger initialization
@@ -703,12 +701,18 @@ class BCDAClient:
             return ["ExplanationOfBenefit", "Patient", "Coverage"]
         return self.config.VALID_RESOURCE_TYPES
 
-    def get_all_data(self, output_dir: str, since: Optional[str] = None) -> Dict[str, List[str]]:
+    def get_all_data(self, output_dir: str, since: Optional[str] = None, incremental: bool = False) -> Dict[str, List[str]]:
         """
         Download all available data and convert to Parquet and CSV formats.
+        
+        Args:
+            output_dir (str): Directory to store output files
+            since (Optional[str]): Starting date for data retrieval (ISO format)
+            incremental (bool): If True, use incremental loading strategy
         """
         downloaded_files = {}
         
+        # Set up directories
         ndjson_dir = os.path.join(output_dir, "ndjson")
         parquet_dir = os.path.join(output_dir, "parquet")
         csv_dir = os.path.join(output_dir, "csv")
@@ -716,7 +720,26 @@ class BCDAClient:
         for directory in [ndjson_dir, parquet_dir, csv_dir]:
             os.makedirs(directory, exist_ok=True)
             self.logger.info(f"Created directory: {directory}")
-        
+
+        # Convert 'since' to a proper FHIR Instant if provided (applies to both incremental and full loads)
+        if since:
+            dt = datetime.fromisoformat(since)
+            dt_utc = dt.astimezone(timezone.utc).replace(microsecond=0)
+            since = dt_utc.isoformat().replace("+00:00", "Z")
+            self.logger.info(f"Starting load from: {since}")
+
+        if incremental:
+            # If incremental and no 'since' found, use default
+            last_processed = self._get_last_processed_date(output_dir) or since
+            if not last_processed:
+                self.logger.info("No previous processing date found, defaulting to 30 days ago")
+                last_processed = (datetime.now() - timedelta(days=30)).isoformat()
+        else:
+            last_processed = self._get_last_processed_date(output_dir) or since
+            if not last_processed:
+                self.logger.info("No previous processing date found, defaulting to 30 days ago")
+                last_processed = (datetime.now() - timedelta(days=30)).isoformat()
+
         for group in ["all"]:
             self.logger.info(f"Processing group: {group}")
             
@@ -727,7 +750,7 @@ class BCDAClient:
             )
             
             if job_id is None:
-                self.logger.warning("No job started for this group (no authorized resource types), skipping.")
+                self.logger.warning("No job started for this group, skipping.")
                 downloaded_files[f"Group/{group}"] = []
                 continue
             
@@ -738,7 +761,10 @@ class BCDAClient:
                 resource_type = file_info["type"]
                 url = file_info["url"]
                 
-                filename = f"{group}_{resource_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.ndjson"
+                # Include timestamp and load type in filename
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                load_type = "incremental" if incremental else "full"
+                filename = f"{group}_{resource_type}_{load_type}_{timestamp}.ndjson"
                 ndjson_path = os.path.join(ndjson_dir, filename)
                 
                 try:
@@ -753,8 +779,42 @@ class BCDAClient:
                     continue
                 
             downloaded_files[f"Group/{group}"] = group_files
+            
+            # Update the last processed date
+            if incremental:
+                self._update_last_processed_date(output_dir)
         
-        return downloaded_files 
+        return downloaded_files
+
+    def _get_last_processed_date(self, output_dir: str) -> Optional[str]:
+        """Get the last processed date from metadata file."""
+        metadata_file = os.path.join(output_dir, "load_metadata.json")
+        try:
+            if os.path.exists(metadata_file):
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+                    return metadata.get('last_processed_date')
+        except Exception as e:
+            self.logger.warning(f"Error reading metadata file: {str(e)}")
+        return None
+
+    def _update_last_processed_date(self, output_dir: str):
+        """Update the last processed date in metadata file."""
+        metadata_file = os.path.join(output_dir, "load_metadata.json")
+        try:
+            metadata = {}
+            if os.path.exists(metadata_file):
+                with open(metadata_file, 'r') as f:
+                    metadata = json.load(f)
+            
+            metadata['last_processed_date'] = datetime.now().isoformat()
+            metadata['last_update'] = datetime.now().isoformat()
+            
+            with open(metadata_file, 'w') as f:
+                json.dump(metadata, f, indent=2)
+            
+        except Exception as e:
+            self.logger.error(f"Error updating metadata file: {str(e)}")
 
     def start_job(self, endpoint: str, resource_types: Optional[List[str]] = None, 
                    since: Optional[str] = None) -> Optional[str]:
