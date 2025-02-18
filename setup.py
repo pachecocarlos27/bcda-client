@@ -18,7 +18,7 @@ requirements = [
 
 setup(
     name="bcda-client-datant",
-    version="0.1.2",
+    version="0.1.3",
     packages=find_packages(exclude=["tests*"]),
     install_requires=requirements,
     author="Carlos Pacheco",

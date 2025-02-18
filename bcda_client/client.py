@@ -6,14 +6,9 @@ import base64
 import pandas as pd
 from .config import BCDAConfig
 from .utils import get_default_since_date, flatten_dict, print_data_summary
-from tqdm import tqdm
 from datetime import datetime, timedelta
-from pyspark.sql import SparkSession
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import multiprocessing
-import queue
-import threading
-from functools import partial
 import pyarrow as pa
 import pyarrow.parquet as pq
 from typing import List, Dict, Optional
@@ -731,6 +726,11 @@ class BCDAClient:
                 since=since
             )
             
+            if job_id is None:
+                self.logger.warning("No job started for this group (no authorized resource types), skipping.")
+                downloaded_files[f"Group/{group}"] = []
+                continue
+            
             job_result = self.wait_for_job(job_id)
             
             group_files = []
@@ -757,69 +757,76 @@ class BCDAClient:
         return downloaded_files 
 
     def start_job(self, endpoint: str, resource_types: Optional[List[str]] = None, 
-                 since: Optional[str] = None) -> str:
+                   since: Optional[str] = None) -> Optional[str]:
         """
-        Start a new data export job.
-        
-        Args:
-            endpoint (str): API endpoint (e.g., "Patient" or "Group/all")
-            resource_types (List[str], optional): List of FHIR resource types to request
-            since (str, optional): ISO date string to filter data since
-        
-        Returns:
-            str: Job ID
+        Start a new data export job. If certain resource types are unauthorized, remove them and retry
+        until none remain or the server accepts them. Returns None if no authorized types remain.
         """
         self._ensure_valid_token()
-        
-        # Validate resource types if provided
+
         if resource_types:
             invalid_types = set(resource_types) - set(self.get_supported_resource_types())
             if invalid_types:
                 raise ValueError(f"Invalid resource types: {invalid_types}")
-        
-        # Build the export URL according to BCDA spec
-        url = urljoin(self.config.base_url, f"/api/v2/{endpoint}/$export")
-        
-        # Build query parameters
-        query_params = []
-        if resource_types:
-            query_params.append(f"_type={','.join(resource_types)}")
-        if since:
-            query_params.append(f"_since={since}")
-        
-        if query_params:
-            url = f"{url}?{'&'.join(query_params)}"
-            
-        headers = {
-            "Accept": "application/fhir+json",
-            "Prefer": "respond-async",
-            "Authorization": f"Bearer {self.access_token}"
-        }
-        
-        try:
-            self.logger.info(f"Starting job with URL: {url}")
-            response = requests.get(url, headers=headers)
-            
-            # Log response details for debugging
-            self.logger.info(f"Response status: {response.status_code}")
-            self.logger.info(f"Response headers: {dict(response.headers)}")
-            
-            response.raise_for_status()
-            
-            # Get job ID from Content-Location header
-            job_url = response.headers.get("Content-Location")
-            if not job_url:
-                raise RuntimeError("No Content-Location header in response")
-            job_id = job_url.split("/")[-1]
-            
-            self.logger.info(f"Started job {job_id} for endpoint {endpoint}")
-            return job_id
-            
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"Failed to start job: {str(e)}")
-            if hasattr(e.response, 'text'):
-                self.logger.error(f"Response text: {e.response.text}")
-            raise
+
+        # Repeat until success or no resource types left
+        while resource_types:
+            url = urljoin(self.config.base_url, f"/api/v2/{endpoint}/$export")
+
+            query_params = []
+            if resource_types:
+                query_params.append(f"_type={','.join(resource_types)}")
+            if since:
+                query_params.append(f"_since={since}")
+
+            if query_params:
+                url = f"{url}?{'&'.join(query_params)}"
+
+            headers = {
+                "Accept": "application/fhir+json",
+                "Prefer": "respond-async",
+                "Authorization": f"Bearer {self.access_token}"
+            }
+
+            try:
+                self.logger.info(f"Starting job with URL: {url}")
+                response = requests.get(url, headers=headers)
+                self.logger.info(f"Response status: {response.status_code}")
+                self.logger.info(f"Response headers: {dict(response.headers)}")
+
+                response.raise_for_status()
+
+                job_url = response.headers.get("Content-Location")
+                if not job_url:
+                    raise RuntimeError("No Content-Location header in response")
+                job_id = job_url.split("/")[-1]
+                
+                self.logger.info(f"Started job {job_id} for endpoint {endpoint}")
+                return job_id  # Success
+
+            except requests.exceptions.HTTPError as e:
+                if e.response is not None and e.response.status_code == 400:
+                    body_text = e.response.text
+                    # Identify any resource types flagged as unauthorized
+                    removed = False
+                    for r_type in list(resource_types):
+                        if f"unauthorized resource type {r_type}" in body_text:
+                            self.logger.warning(f"Removing unauthorized resource type: {r_type}")
+                            resource_types.remove(r_type)
+                            removed = True
+                    if removed:
+                        # If we removed something, try again
+                        continue
+
+                # If we arrive here, it's a non-recoverable 400 or another error
+                self.logger.error(f"Failed to start job: {str(e)}")
+                if hasattr(e.response, 'text'):
+                    self.logger.error(f"Response text: {e.response.text}")
+                raise
+
+        # If no resource types remain, skip the job without error
+        self.logger.warning("No authorized resource types remain. Skipping job.")
+        return None
 
     def _ensure_valid_token(self):
         """Ensure we have a valid access token."""
@@ -1041,3 +1048,61 @@ class BCDAClient:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
             raise 
+
+    def get_server_metadata(self) -> Dict:
+        """
+        Retrieve server metadata from '/api/v2/metadata'.
+        Useful for discovering supported features and capabilities.
+        """
+        self._ensure_valid_token()
+        url = urljoin(self.config.base_url, "/api/v2/metadata")
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Accept": "application/json"
+        }
+        try:
+            response = self._make_request("GET", url, headers=headers)
+            metadata = response.json()
+            self.logger.info("Fetched server metadata successfully.")
+            return metadata
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Failed to fetch server metadata: {str(e)}")
+            raise
+
+    def list_jobs(self) -> List[Dict]:
+        """
+        List all jobs via '/api/v2/jobs'.
+        Returns:
+            A list of job info dictionaries, or an empty list on error.
+        """
+        self._ensure_valid_token()
+        url = urljoin(self.config.base_url, "/api/v2/jobs")
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Accept": "application/fhir+json"
+        }
+        try:
+            response = self._make_request("GET", url, headers=headers)
+            job_list = response.json()
+            self.logger.info(f"Found {len(job_list)} existing job(s).")
+            return job_list if isinstance(job_list, list) else []
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Failed to list jobs: {str(e)}")
+            return []
+
+    def check_accessible_resource_types(self, candidate_types: List[str]) -> List[str]:
+        """
+        Quick-check a list of resource types and return those that do NOT
+        immediately throw a 400 unauthorized resource error.
+        This does NOT remove from the main code, just returns the accessible subset.
+        """
+        accessible = []
+        for r_type in candidate_types:
+            try:
+                # We'll do a dry-run with start_job using only r_type
+                job_id = self.start_job("Group/all", [r_type])
+                if job_id is not None:
+                    accessible.append(r_type)
+            except requests.exceptions.HTTPError as e:
+                self.logger.warning(f"{r_type} appears unauthorized or invalid: {str(e)}")
+        return accessible 
