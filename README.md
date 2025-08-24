@@ -1,110 +1,260 @@
 # BCDA Client
 
-A Python client for the CMS Beneficiary Claims Data API (BCDA).
+[![Python Version](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![GitHub Issues](https://img.shields.io/github/issues/pachecocarlos27/bcda-client.svg)](https://github.com/pachecocarlos27/bcda-client/issues)
+[![GitHub Stars](https://img.shields.io/github/stars/pachecocarlos27/bcda-client.svg)](https://github.com/pachecocarlos27/bcda-client/stargazers)
 
-## Installation
+A comprehensive Python client library for interacting with the Beneficiary Claims Data API (BCDA), designed to simplify healthcare data access and processing for Medicare Advantage Organizations and ACO REACH participants.
 
-bash
+## 🎯 Features
+
+- **🔐 Secure Authentication**: Built-in OAuth2 authentication handling
+- **📦 Bulk Data Export**: Efficient handling of FHIR bulk data exports
+- **🔄 Automatic Retries**: Smart retry logic for network failures
+- **📊 Data Processing**: Built-in utilities for processing FHIR resources
+- **🚀 Async Support**: Asynchronous operations for better performance
+- **📝 Comprehensive Logging**: Detailed logging for debugging and monitoring
+- **✅ Type Hints**: Full type annotation support for better IDE integration
+
+## 📋 Table of Contents
+
+- [Installation](#-installation)
+- [Quick Start](#-quick-start)
+- [Configuration](#-configuration)
+- [Usage Examples](#-usage-examples)
+- [API Reference](#-api-reference)
+- [Contributing](#-contributing)
+- [License](#-license)
+
+## 🚀 Installation
+
+```bash
+# Using pip
 pip install bcda-client
 
-## Quick Start
+# Using poetry
+poetry add bcda-client
 
-python
+# From source
+git clone https://github.com/pachecocarlos27/bcda-client.git
+cd bcda-client
+pip install -e .
+```
+
+## 🏃 Quick Start
+
+```python
 from bcda_client import BCDAClient
-Initialize client (Sandbox)
+from bcda_client.models import ExportType
+
+# Initialize the client
 client = BCDAClient(
-client_id="your_client_id",
-client_secret="your_client_secret",
-is_sandbox=True
-)
-Download data
-results = client.download_data(
-output_dir="my_data",
-include_csv=True,
-incremental=False
+    client_id="your-client-id",
+    client_secret="your-client-secret",
+    environment="sandbox"  # or "production"
 )
 
-## Features
+# Authenticate
+client.authenticate()
 
-- Support for both sandbox and production environments
-- Automatic authentication handling
-- Support for all BCDA endpoints:
-  - Metadata
-  - Patient
-  - Group (all and runout)
-  - Jobs
-  - Attribution Status
-- Data export in both Parquet and CSV formats
-- Support for incremental and full extracts
-- Automatic flattening of nested FHIR structures
-
-## Configuration
-
-### Environment Options
-
-Sandbox Environment
-client = BCDAClient(
-client_id="your_client_id",
-client_secret="your_client_secret",
-is_sandbox=True
-)
-Production Environment
-client = BCDAClient(
-client_id="your_client_id",
-client_secret="your_client_secret",
-is_sandbox=False
-)
-Custom Environment
-client = BCDAClient(
-client_id="your_client_id",
-client_secret="your_client_secret",
-base_url="https://custom.bcda.url"
+# Start a bulk export job
+job_url = client.start_bulk_export(
+    export_type=ExportType.PATIENT,
+    since="2024-01-01",
+    resource_types=["Patient", "Coverage", "ExplanationOfBenefit"]
 )
 
-### Download Options
-Full extract with CSV
-client.download_data(
-output_dir="my_data",
-include_csv=True,
-incremental=False
+# Check job status
+status = client.get_job_status(job_url)
+
+# Download data when ready
+if status.is_complete:
+    files = client.download_all_files(status.output_files)
+```
+
+## ⚙️ Configuration
+
+### Environment Variables
+
+Create a `.env` file in your project root:
+
+```env
+BCDA_CLIENT_ID=your-client-id
+BCDA_CLIENT_SECRET=your-client-secret
+BCDA_ENVIRONMENT=sandbox
+BCDA_API_VERSION=v2
+BCDA_TIMEOUT=300
+BCDA_MAX_RETRIES=3
+```
+
+### Configuration Object
+
+```python
+from bcda_client import BCDAClient, BCDAConfig
+
+config = BCDAConfig(
+    client_id="your-client-id",
+    client_secret="your-client-secret",
+    environment="sandbox",
+    api_version="v2",
+    timeout=300,
+    max_retries=3,
+    log_level="INFO"
 )
-Incremental extract (last 30 days)
-client.download_data(
-output_dir="my_data",
-include_csv=True,
-incremental=True
+
+client = BCDAClient(config=config)
+```
+
+## 📚 Usage Examples
+
+### Basic Export
+
+```python
+# Export all data for your ACO
+job_url = client.start_bulk_export()
+
+# Wait for completion and download
+files = client.export_and_download(
+    export_type=ExportType.PATIENT,
+    output_dir="./data/exports"
+)
+```
+
+### Filtered Export
+
+```python
+# Export specific resource types since a date
+job_url = client.start_bulk_export(
+    export_type=ExportType.GROUP,
+    since="2024-01-01T00:00:00Z",
+    resource_types=["Patient", "Coverage"],
+    output_format="ndjson"
+)
+```
+
+### Async Operations
+
+```python
+import asyncio
+from bcda_client import AsyncBCDAClient
+
+async def main():
+    async with AsyncBCDAClient(config=config) as client:
+        await client.authenticate()
+        
+        # Start multiple export jobs
+        jobs = await asyncio.gather(
+            client.start_bulk_export(export_type=ExportType.PATIENT),
+            client.start_bulk_export(export_type=ExportType.COVERAGE)
+        )
+        
+        # Process results
+        for job_url in jobs:
+            status = await client.get_job_status(job_url)
+            print(f"Job {job_url}: {status.status}")
+
+asyncio.run(main())
+```
+
+### Error Handling
+
+```python
+from bcda_client.exceptions import (
+    BCDAAuthenticationError,
+    BCDAExportError,
+    BCDATimeoutError
 )
 
-## Output Structure
+try:
+    client.authenticate()
+    job_url = client.start_bulk_export()
+except BCDAAuthenticationError as e:
+    print(f"Authentication failed: {e}")
+except BCDAExportError as e:
+    print(f"Export failed: {e}")
+except BCDATimeoutError as e:
+    print(f"Request timed out: {e}")
+```
 
-my_data/
-├── parquet/
-│ ├── Patient_20240211_134435.parquet
-│ ├── Coverage_20240211_134435.parquet
-│ └── ExplanationOfBenefit_20240211_134435.parquet
-└── csv/
-├── Patient_20240211_134435.csv
-├── Coverage_20240211_134435.csv
-└── ExplanationOfBenefit_20240211_134435.csv
+## 📖 API Reference
 
+### BCDAClient
 
-## Features
+#### Methods
 
-- Easy authentication with the BCDA API
-- Simple methods to retrieve beneficiary data
-- Automatic handling of pagination
-- Error handling and retry mechanisms
+- `authenticate()` - Authenticate with BCDA API
+- `start_bulk_export(**kwargs)` - Start a new bulk export job
+- `get_job_status(job_url)` - Check the status of an export job
+- `cancel_job(job_url)` - Cancel a running export job
+- `download_file(file_url, output_path)` - Download a single export file
+- `download_all_files(file_urls, output_dir)` - Download multiple files
+- `export_and_download(**kwargs)` - Combined export and download operation
 
-## Requirements
+### Models
 
-- Python 3.6+
-- See requirements.txt for package dependencies
+- `ExportType` - Enum for export types (PATIENT, COVERAGE, GROUP)
+- `JobStatus` - Export job status information
+- `ExportFile` - Individual file information
+- `BCDAConfig` - Client configuration
 
-## License
+## 🤝 Contributing
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
 
-## Contributing
+### Development Setup
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+```bash
+# Clone the repository
+git clone https://github.com/pachecocarlos27/bcda-client.git
+cd bcda-client
 
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements-dev.txt
+
+# Run tests
+pytest
+
+# Run linting
+flake8 bcda_client/
+mypy bcda_client/
+```
+
+## 🧪 Testing
+
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=bcda_client
+
+# Run specific test file
+pytest tests/test_client.py
+```
+
+## 📝 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- CMS for providing the BCDA API
+- FHIR community for the bulk data standards
+- All contributors to this project
+
+## 📞 Support
+
+- 📧 Email: carlos.pacheco@example.com
+- 🐛 Issues: [GitHub Issues](https://github.com/pachecocarlos27/bcda-client/issues)
+- 💬 Discussions: [GitHub Discussions](https://github.com/pachecocarlos27/bcda-client/discussions)
+
+---
+
+<div align="center">
+Made with ❤️ by <a href="https://github.com/pachecocarlos27">Carlos Pacheco</a>
+</div>
